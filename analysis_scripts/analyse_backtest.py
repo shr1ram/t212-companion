@@ -18,7 +18,7 @@ from datetime import datetime
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from yfinance_companion.api import PortfolioAnalyzer
+from portfolio_analysis import PortfolioAnalyzer
 from t212_companion.utils import load_from_json, load_from_csv
 
 # Configure logging
