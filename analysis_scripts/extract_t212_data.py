@@ -19,7 +19,7 @@ from t212_companion.utils import save_to_json, save_to_csv
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Extract portfolio data from Trading 212 API')
-    parser.add_argument('--output-dir', type=str, default='data',
+    parser.add_argument('--output-dir', type=str, default='t212_data',
                         help='Directory to save output files')
     parser.add_argument('--format', type=str, choices=['json', 'csv'], default='json',
                         help='Output file format')
@@ -59,26 +59,29 @@ def main():
         print("Extracting transactions...")
         transactions = api.get_transactions()
         
-        # Save data
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+        # Save data without timestamps in filenames
         if args.format == 'json':
             # Save to JSON files
-            save_to_json(account_data, f"account_data", args.output_dir)
-            save_to_json(positions, f"positions", args.output_dir)
-            save_to_json(historical_orders, f"historical_orders", args.output_dir)
-            save_to_json(dividends, f"dividends", args.output_dir)
-            save_to_json(transactions, f"transactions", args.output_dir)
+            save_to_json(account_data, "account_data", args.output_dir)
+            save_to_json(positions, "positions", args.output_dir)
+            save_to_json(historical_orders, "historical_orders", args.output_dir)
+            save_to_json(dividends, "dividends", args.output_dir)
+            save_to_json(transactions, "transactions", args.output_dir)
         else:
             # Save to CSV files
-            save_to_csv(account_data, f"account_data", args.output_dir)
-            save_to_csv(positions, f"positions", args.output_dir)
+            save_to_csv(account_data, "account_data", args.output_dir)
+            save_to_csv(positions, "positions", args.output_dir)
             save_to_csv(historical_orders['items'] if 'items' in historical_orders else historical_orders, 
-                       f"historical_orders", args.output_dir)
+                       "historical_orders", args.output_dir)
             save_to_csv(dividends['items'] if 'items' in dividends else dividends, 
-                       f"dividends", args.output_dir)
+                       "dividends", args.output_dir)
             save_to_csv(transactions['items'] if 'items' in transactions else transactions, 
-                       f"transactions", args.output_dir)
+                       "transactions", args.output_dir)
+        
+        # Save last update timestamp to a text file
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(os.path.join(args.output_dir, "last_update.txt"), 'w') as f:
+            f.write(f"Last updated: {timestamp}")
         
         print(f"Data extraction complete. Files saved to {args.output_dir}/")
         
