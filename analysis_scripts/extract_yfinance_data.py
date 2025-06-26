@@ -36,8 +36,9 @@ def load_positions(args):
     if args.positions_file:
         positions_file = args.positions_file
     else:
-        # Find the most recent positions file in the data directory
-        positions_files = [f for f in os.listdir(args.data_dir) if f.startswith('positions_') and (f.endswith('.json') or f.endswith('.csv'))]
+        # Find positions file in the data directory
+        positions_file_name = 'positions.json'
+        positions_files = [f for f in os.listdir(args.data_dir) if f == positions_file_name]
         if not positions_files:
             raise FileNotFoundError(f"No positions file found in {args.data_dir} directory")
         positions_file = os.path.join(args.data_dir, sorted(positions_files)[-1])

@@ -8,17 +8,25 @@ statistical analysis and generate performance charts.
 import os
 import sys
 import json
+import logging
 import argparse
-from datetime import datetime
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
+from datetime import datetime
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from yfinance_companion.api import PortfolioAnalyzer
 from t212_companion.utils import load_from_json, load_from_csv
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 def parse_arguments():
@@ -34,7 +42,64 @@ def parse_arguments():
                         help='Annual risk-free rate for calculations')
     parser.add_argument('--ticker', type=str, default=None,
                         help='Analyze a specific ticker only')
+    parser.add_argument('--ignore-warnings', action='store_true',
+                        help='Ignore date mismatch warnings and proceed with analysis')
     return parser.parse_args()
+
+
+def check_last_update_dates(args):
+    """
+    Check the last update dates for different data sources and warn if they're out of sync.
+    
+    Returns:
+        dict: A dictionary with data source names as keys and datetime objects as values
+    """
+    update_dates = {}
+    
+    # Check each data directory for last_update.txt
+    for dir_name, dir_path in [
+        ('backtest_data', args.backtest_data_dir),
+        ('yfinance_data', args.yfinance_data_dir),
+        ('reports', args.output_dir)
+    ]:
+        last_update_file = os.path.join(dir_path, "last_update.txt")
+        if os.path.exists(last_update_file):
+            with open(last_update_file, 'r') as f:
+                content = f.read().strip()
+                # Extract datetime from "Last updated: YYYY-MM-DD HH:MM:SS" format
+                if "Last updated:" in content:
+                    date_str = content.replace("Last updated:", "").strip()
+                    try:
+                        update_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+                        update_dates[dir_name] = update_date
+                    except ValueError:
+                        logger.warning(f"Could not parse date from {last_update_file}: {content}")
+    
+    # Check for mismatches
+    if len(update_dates) > 1:
+        dates_list = list(update_dates.items())
+        has_warning = False
+        
+        for i in range(len(dates_list)):
+            for j in range(i+1, len(dates_list)):
+                source1, date1 = dates_list[i]
+                source2, date2 = dates_list[j]
+                
+                # Calculate difference in days
+                diff = abs((date1 - date2).total_seconds() / 86400)
+                
+                if diff > 1:  # More than 1 day difference
+                    logger.warning(f"DATA MISMATCH WARNING: {source1} was last updated on {date1.strftime('%Y-%m-%d')} "
+                                  f"but {source2} was last updated on {date2.strftime('%Y-%m-%d')} "
+                                  f"({diff:.1f} days difference)")
+                    has_warning = True
+        
+        if has_warning and not args.ignore_warnings:
+            logger.warning("Data sources are out of sync. This may lead to incomplete or misleading analysis.")
+            logger.warning("Consider updating all data sources to the same date.")
+            logger.warning("Use --ignore-warnings to proceed anyway.")
+            
+    return update_dates
 
 
 def load_backtest_data(args):
@@ -134,7 +199,7 @@ def load_historical_prices(args):
     return historical_prices
 
 
-def combine_position_and_price_data(backtest_data, historical_prices):
+def combine_position_and_price_data(backtest_data, historical_prices, args):
     """
     Combine position data with price data to create a complete dataset
     for analysis with position sizes at each date.
@@ -143,6 +208,11 @@ def combine_position_and_price_data(backtest_data, historical_prices):
     
     combined_data = {}
     
+    # Track the overall date range of data
+    overall_min_date = None
+    overall_max_date = None
+    date_mismatches = []
+    
     for ticker in backtest_data.keys():
         if ticker not in historical_prices:
             print(f"  - Warning: No price data found for {ticker}")
@@ -150,6 +220,36 @@ def combine_position_and_price_data(backtest_data, historical_prices):
         
         position_df = backtest_data[ticker]
         price_df = historical_prices[ticker]
+        
+        # Determine the date ranges
+        if not position_df.empty and not price_df.empty:
+            position_min = position_df.index.min()
+            position_max = position_df.index.max()
+            price_min = price_df.index.min()
+            price_max = price_df.index.max()
+            
+            # Calculate the common date range
+            start_date = max(position_min, price_min)
+            end_date = min(position_max, price_max)
+            
+            # Track overall date range
+            if overall_min_date is None or start_date < overall_min_date:
+                overall_min_date = start_date
+            if overall_max_date is None or end_date > overall_max_date:
+                overall_max_date = end_date
+            
+            # Check for any date mismatches (even 1 day)
+            position_price_diff = abs((position_max - price_max).days)
+            if position_price_diff > 0:
+                date_mismatches.append({
+                    'ticker': ticker,
+                    'position_range': f"{position_min.date()} to {position_max.date()}",
+                    'price_range': f"{price_min.date()} to {price_max.date()}",
+                    'difference_days': position_price_diff
+                })
+                logger.warning(f"DATE MISMATCH: {ticker} position data ends on {position_max.date()}, "
+                              f"but price data ends on {price_max.date()} "
+                              f"({position_price_diff} days difference)")
         
         # Merge position and price data
         combined_df = pd.DataFrame(index=price_df.index)
@@ -182,6 +282,58 @@ def combine_position_and_price_data(backtest_data, historical_prices):
         # Store in result dictionary
         combined_data[ticker] = combined_df
     
+    # Check for end date mismatches between instruments
+    instrument_end_dates = {}
+    for ticker, df in combined_data.items():
+        if not df.empty:
+            instrument_end_dates[ticker] = df.index.max()
+    
+    # Find the latest end date across all instruments
+    if instrument_end_dates:
+        latest_date = max(instrument_end_dates.values())
+        instruments_not_up_to_date = []
+        
+        # Check which instruments don't have data up to the latest date
+        for ticker, end_date in instrument_end_dates.items():
+            if end_date != latest_date:
+                diff_days = (latest_date - end_date).days
+                instruments_not_up_to_date.append({
+                    'ticker': ticker,
+                    'end_date': end_date.date(),
+                    'latest_date': latest_date.date(),
+                    'days_behind': diff_days
+                })
+                logger.warning(f"INSTRUMENT DATE MISMATCH: {ticker} data ends on {end_date.date()}, "
+                              f"which is {diff_days} days behind the latest data ({latest_date.date()})")
+        
+        # Add to date mismatches list
+        if instruments_not_up_to_date and not date_mismatches:
+            date_mismatches = []
+        date_mismatches.extend(instruments_not_up_to_date)
+    
+    # Print summary of date range used for analysis
+    if overall_min_date and overall_max_date:
+        print(f"\nAnalysis will use data from {overall_min_date.date()} to {overall_max_date.date()}")
+        
+    # Print summary of date mismatches if any
+    if date_mismatches:
+        print("\nWARNING: Date mismatches detected:")
+        for mismatch in date_mismatches:
+            if 'position_range' in mismatch:
+                print(f"  - {mismatch['ticker']}: Position data: {mismatch['position_range']}, "
+                      f"Price data: {mismatch['price_range']} "
+                      f"({mismatch['difference_days']} days difference)")
+            elif 'days_behind' in mismatch:
+                print(f"  - {mismatch['ticker']}: Data ends on {mismatch['end_date']}, "
+                      f"which is {mismatch['days_behind']} days behind the latest data ({mismatch['latest_date']})")
+        print("\nThis may lead to incomplete or misleading analysis results.")
+        print("Use --ignore-warnings to proceed with analysis despite these warnings.")
+        
+        # If warnings are not ignored, exit
+        if not args.ignore_warnings:
+            logger.error("Analysis aborted due to date mismatches. Use --ignore-warnings to proceed anyway.")
+            sys.exit(1)
+    
     return combined_data
 
 
@@ -194,12 +346,20 @@ def main():
         os.makedirs(args.output_dir)
     
     try:
+        # Check last update dates for data sources
+        update_dates = check_last_update_dates(args)
+        if update_dates:
+            print("\nData source last update dates:")
+            for source, date in update_dates.items():
+                print(f"  - {source}: {date.strftime('%Y-%m-%d %H:%M:%S')}")
+            print()  # Add a blank line
+        
         # Load data
         backtest_data = load_backtest_data(args)
         historical_prices = load_historical_prices(args)
         
         # Combine position and price data
-        combined_data = combine_position_and_price_data(backtest_data, historical_prices)
+        combined_data = combine_position_and_price_data(backtest_data, historical_prices, args)
         
         # Create a portfolio analyzer
         # First, create a positions list for the analyzer in the format it expects
@@ -296,7 +456,14 @@ def main():
                 "portfolio": portfolio_sharpe,
                 "instruments": {ticker: sharpe for ticker, sharpe in sharpe_ratios.items() if ticker != 'Portfolio'}
             },
-            "instruments_analyzed": list(combined_data.keys())
+            "instruments_analyzed": list(combined_data.keys()),
+            "data_date_ranges": {
+                "analysis_period": {
+                    "start": overall_min_date.strftime("%Y-%m-%d") if 'overall_min_date' in locals() else None,
+                    "end": overall_max_date.strftime("%Y-%m-%d") if 'overall_max_date' in locals() else None
+                },
+                "date_mismatches": date_mismatches if 'date_mismatches' in locals() else []
+            }
         }
         results_path = os.path.join(args.output_dir, "backtest_results.json")
         with open(results_path, 'w') as f:
