@@ -89,6 +89,12 @@ def main():
             data = yf_api.get_historical_data(ticker, period=args.period, interval=args.interval)
             
             if data is not None and not data.empty:
+                # Filter out entries with low volume (<=10)
+                original_count = len(data)
+                data = data[data['Volume'] > 10]
+                filtered_count = original_count - len(data)
+                if filtered_count > 0:
+                    print(f"  - Filtered out {filtered_count} entries with volume <= 10")
                 # Convert DataFrame to dictionary for JSON serialization
                 # First reset index to make date a column
                 data_dict = data.reset_index().to_dict(orient='records')
