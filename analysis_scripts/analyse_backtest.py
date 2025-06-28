@@ -412,15 +412,14 @@ def main():
         print("\nSharpe Ratios:")
         for ticker, sharpe in sharpe_ratios.items():
             print(f"{ticker}: {sharpe:.4f}")
-        
-        # Plot prices
-        print("\nGenerating price chart...")
+        # Plot instrument performance
+        print("\nGenerating instrument performance chart...")
         price_fig = analyzer.plot_prices()
         if price_fig:
             price_fig.tight_layout()
-            price_fig_path = os.path.join(args.output_dir, "price_performance.png")
-            price_fig.savefig(price_fig_path)
-            print(f"Price chart saved to {price_fig_path}")
+            price_chart_path = os.path.join(args.output_dir, 'instrument_performance.png')
+            price_fig.savefig(price_chart_path)
+            print(f"Instrument performance chart saved to {price_chart_path}")
         
         # Plot portfolio performance
         print("\nGenerating portfolio performance chart...")
@@ -439,11 +438,24 @@ def main():
             sharpe_fig_path = os.path.join(args.output_dir, "sharpe_ratios.png")
             sharpe_fig.savefig(sharpe_fig_path)
             print(f"Sharpe ratio chart saved to {sharpe_fig_path}")
+        # Calculate all portfolio metrics
+        print("\nCalculating portfolio performance metrics...")
+        portfolio_metrics = analyzer.calculate_all_metrics()
         
-        # Get portfolio Sharpe ratio (if available in the results)
-        portfolio_sharpe = None
-        if 'Portfolio' in sharpe_ratios:
-            portfolio_sharpe = sharpe_ratios['Portfolio']
+        # Print metrics in a table format
+        print("\nPortfolio Performance Metrics:")
+        print("-" * 60)
+        print(f"{'Metric':<25} {'Value':>15} {'Unit':>15}")
+        print("-" * 60)
+        print(f"{'Sharpe Ratio':<25} {portfolio_metrics.get('sharpe_ratio', 'N/A'):>15.4f} {'':>15}")
+        print(f"{'Mean Annual Return':<25} {portfolio_metrics.get('mean_annual_return', 'N/A'):>15.2f} {'%':>15}")
+        print(f"{'Standard Deviation':<25} {portfolio_metrics.get('standard_deviation', 'N/A'):>15.2f} {'%':>15}")
+        print(f"{'Average Drawdown':<25} {portfolio_metrics.get('average_drawdown', 'N/A'):>15.2f} {'%':>15}")
+        print(f"{'Maximum Drawdown':<25} {portfolio_metrics.get('max_drawdown', 'N/A'):>15.2f} {'%':>15}")
+        print(f"{'Skew':<25} {portfolio_metrics.get('skew', 'N/A'):>15.4f} {'':>15}")
+        print(f"{'Lower Tail (5%)':<25} {portfolio_metrics.get('lower_tail', 'N/A'):>15.2f} {'%':>15}")
+        print(f"{'Upper Tail (95%)':<25} {portfolio_metrics.get('upper_tail', 'N/A'):>15.2f} {'%':>15}")
+        print("-" * 60)
         
         # Get current timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -452,8 +464,9 @@ def main():
         results = {
             "timestamp": timestamp,
             "risk_free_rate": args.risk_free_rate,
+            "portfolio_metrics": portfolio_metrics,
             "sharpe_ratios": {
-                "portfolio": portfolio_sharpe,
+                "portfolio": portfolio_metrics.get('sharpe_ratio'),
                 "instruments": {ticker: sharpe for ticker, sharpe in sharpe_ratios.items() if ticker != 'Portfolio'}
             },
             "instruments_analyzed": list(combined_data.keys()),

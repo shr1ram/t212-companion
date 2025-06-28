@@ -325,3 +325,257 @@ class PortfolioAnalyzer:
         ax.grid(True, axis='y')
         
         return fig
+        
+    def calculate_mean_annual_return(self, returns: pd.Series = None) -> float:
+        """
+        Calculate mean annual return from daily returns.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Mean annual return as a percentage
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate mean annual return")
+            return 0.0
+            
+        try:
+            # Calculate mean daily return
+            mean_daily_return = returns.mean()
+            
+            # Convert to annual return (assuming 256 trading days)
+            annual_return = mean_daily_return * 256
+            
+            # Convert to percentage
+            return annual_return * 100
+        except Exception as e:
+            logger.error(f"Error calculating mean annual return: {e}")
+            return 0.0
+            
+    def calculate_standard_deviation(self, returns: pd.Series = None, annualized: bool = True) -> float:
+        """
+        Calculate standard deviation of returns.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            annualized: Whether to annualize the standard deviation
+            
+        Returns:
+            Standard deviation as a percentage
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate standard deviation")
+            return 0.0
+            
+        try:
+            # Calculate standard deviation
+            std_dev = returns.std()
+            
+            # Annualize if requested (assuming 256 trading days)
+            if annualized:
+                std_dev = std_dev * np.sqrt(256)
+                
+            # Convert to percentage
+            return std_dev * 100
+        except Exception as e:
+            logger.error(f"Error calculating standard deviation: {e}")
+            return 0.0
+            
+    def calculate_drawdowns(self, returns: pd.Series = None) -> pd.Series:
+        """
+        Calculate drawdowns from a series of returns.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Series of drawdowns
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate drawdowns")
+            return pd.Series()
+            
+        try:
+            # Calculate cumulative returns
+            cum_returns = (1 + returns).cumprod()
+            
+            # Calculate running maximum
+            running_max = cum_returns.cummax()
+            
+            # Calculate drawdowns
+            drawdowns = (cum_returns - running_max) / running_max
+            
+            return drawdowns
+        except Exception as e:
+            logger.error(f"Error calculating drawdowns: {e}")
+            return pd.Series()
+            
+    def calculate_average_drawdown(self, returns: pd.Series = None) -> float:
+        """
+        Calculate average drawdown from a series of returns.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Average drawdown as a percentage
+        """
+        drawdowns = self.calculate_drawdowns(returns)
+        
+        if drawdowns.empty:
+            return 0.0
+            
+        # Filter for only negative values (actual drawdowns)
+        negative_drawdowns = drawdowns[drawdowns < 0]
+        
+        if negative_drawdowns.empty:
+            return 0.0
+            
+        # Calculate average and convert to percentage
+        return negative_drawdowns.mean() * 100
+        
+    def calculate_max_drawdown(self, returns: pd.Series = None) -> float:
+        """
+        Calculate maximum drawdown from a series of returns.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Maximum drawdown as a percentage
+        """
+        drawdowns = self.calculate_drawdowns(returns)
+        
+        if drawdowns.empty:
+            return 0.0
+            
+        # Find minimum (worst) drawdown and convert to percentage
+        return drawdowns.min() * 100
+        
+    def calculate_skew(self, returns: pd.Series = None) -> float:
+        """
+        Calculate skewness of returns distribution.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Skewness value
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate skew")
+            return 0.0
+            
+        try:
+            return returns.skew()
+        except Exception as e:
+            logger.error(f"Error calculating skew: {e}")
+            return 0.0
+            
+    def calculate_tail_metrics(self, returns: pd.Series = None, lower_percentile: float = 5.0, upper_percentile: float = 95.0) -> Dict[str, float]:
+        """
+        Calculate relative lower and upper fat tail ratios (See R Carver AFTS).
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            lower_percentile: Lower fat tail ratio
+            upper_percentile: Upper fat tail ratio
+            
+        Returns:
+            Dictionary with lower and upper tail ratios
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate tail metrics")
+            return {"lower_tail": 0.0, "upper_tail": 0.0}
+            
+        try:
+            percentile_1 = returns.quantile(1 / 100) * 100
+            percentile_30 = returns.quantile(30 / 100) * 100
+            percentile_70 = returns.quantile(70 / 100) * 100
+            percentile_99 = returns.quantile(99 / 100) * 100
+            
+            lower_percentile_ratio = (percentile_1 / percentile_30)
+            upper_percentile_ratio = (percentile_99 / percentile_70)
+
+            gaussian_ratio = 4.43
+
+            relative_lower_fat_tail_ratio = lower_percentile_ratio / gaussian_ratio
+            relative_upper_fat_tail_ratio = upper_percentile_ratio / gaussian_ratio
+
+            lower_tail = relative_lower_fat_tail_ratio
+            upper_tail = relative_upper_fat_tail_ratio
+
+            return {"lower_tail": lower_tail, "upper_tail": upper_tail}
+        except Exception as e:
+            logger.error(f"Error calculating tail metrics: {e}")
+            return {"lower_tail": 0.0, "upper_tail": 0.0}
+            
+    # Turnover calculation removed as requested
+        
+    def calculate_all_metrics(self, returns: pd.Series = None) -> Dict[str, float]:
+        """
+        Calculate all portfolio metrics in one call.
+        
+        Args:
+            returns: Series of returns (if None, uses portfolio returns)
+            
+        Returns:
+            Dictionary of all calculated metrics
+        """
+        if returns is None:
+            if self.portfolio_returns is None:
+                self.calculate_portfolio_returns()
+            returns = self.portfolio_returns
+            
+        if returns is None or returns.empty:
+            logger.warning("No returns data available to calculate metrics")
+            return {}
+            
+        # Calculate all metrics
+        sharpe_ratio = self.calculate_sharpe_ratio(returns)
+        mean_annual_return = self.calculate_mean_annual_return(returns)
+        std_dev = self.calculate_standard_deviation(returns)
+        avg_drawdown = self.calculate_average_drawdown(returns)
+        max_drawdown = self.calculate_max_drawdown(returns)
+        skew = self.calculate_skew(returns)
+        tail_metrics = self.calculate_tail_metrics(returns)
+        
+        # Combine all metrics into a dictionary
+        metrics = {
+            "sharpe_ratio": sharpe_ratio,
+            "mean_annual_return": mean_annual_return,
+            "standard_deviation": std_dev,
+            "average_drawdown": avg_drawdown,
+            "max_drawdown": max_drawdown,
+            "skew": skew,
+            "lower_tail": tail_metrics["lower_tail"],
+            "upper_tail": tail_metrics["upper_tail"]
+        }
+        
+        return metrics
